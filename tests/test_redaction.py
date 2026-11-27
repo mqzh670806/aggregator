@@ -13,8 +13,15 @@ from security.redaction import redact_mapping, redact_url
 
 class RedactionTests(unittest.TestCase):
     def test_redact_mapping_hides_sensitive_values(self):
-        source = {"username": "demo", "password": "secret", "headers": {"Authorization": "Bearer token-123", "X-Cookie": "c=abc"}, "items": [{"token": "t-1"}, {"note": "keep"}]}
+        source = {
+            "username": "demo",
+            "password": "secret",
+            "headers": {"Authorization": "Bearer token-123", "X-Cookie": "c=abc"},
+            "items": [{"token": "t-1"}, {"note": "keep"}],
+        }
+
         result = redact_mapping(source)
+
         self.assertEqual(result["username"], "demo")
         self.assertEqual(result["password"], "***")
         self.assertEqual(result["headers"]["Authorization"], "***")
