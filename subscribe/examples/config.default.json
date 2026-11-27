@@ -19,7 +19,7 @@
                 "accounts": [
                     {
                         "email": "",
-                        "password": "",
+                        "password_env": "RENEW_ACCOUNT_PASSWORD",
                         "ticket": {
                             "enable": true,
                             "auto_reset": false,
