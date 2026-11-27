@@ -17,7 +17,10 @@ if TYPE_CHECKING:
 
 TValue = TypeVar("TValue")
 
-CONVERT_TARGETS = ["clash", "v2ray", "singbox", "mixed", "clashr", "quan", "quanx", "loon", "ss", "sssub", "ssd", "ssr", "surfboard", "surge"]
+CONVERT_TARGETS = [
+    "clash", "v2ray", "singbox", "mixed", "clashr", "quan", "quanx", "loon",
+    "ss", "sssub", "ssd", "ssr", "surfboard", "surge",
+]
 
 
 def _parse_source_rule(obj: ObjectNode) -> dict[str, object]:
@@ -25,4 +28,9 @@ def _parse_source_rule(obj: ObjectNode) -> dict[str, object]:
     task = TaskParams.parse(obj.field("task"))
     if task.push_to is None:
         task.push_to = list(push_to)
-    return {"include": obj.regex("include", default=""), "exclude": obj.regex("exclude", default=""), "push_to": push_to, "task": task}
+    return {
+        "include": obj.regex("include", default=""),
+        "exclude": obj.regex("exclude", default=""),
+        "push_to": push_to,
+        "task": task,
+    }
