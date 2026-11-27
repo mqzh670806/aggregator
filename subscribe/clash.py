@@ -20,9 +20,9 @@ import yaml
 from logger import logger
 from outbound import QuotedStr, endpoint_key, proxy_exists, quoted_scalar
 
-CTX = ssl.create_default_context()
-CTX.check_hostname = False
-CTX.verify_mode = ssl.CERT_NONE
+# Reuse the verified TLS context created in utils. Keeping a second insecure
+# local context here would reintroduce certificate bypasses.
+CTX = utils.CTX
 
 DOWNLOAD_URL = [
     "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN.zip",
