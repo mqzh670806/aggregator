@@ -80,7 +80,7 @@ def getrss(params: dict[str, object], ctx: PluginContext | None = None) -> list[
 
     emails = params.get("emails", [])
     if emails and type(emails) == list:
-        emails = [x for x in emails if re.match(r"^\w+([-+.]]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*$", x)]
+        emails = [x for x in emails if re.match(r"^\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*$", x)]
 
     config = params.get("config", {})
     if not emails or not config or type(config) != dict or not config.get("push_to"):
