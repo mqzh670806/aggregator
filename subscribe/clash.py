@@ -10,6 +10,7 @@ import random
 import re
 import ssl
 import string
+import subprocess
 import urllib
 import urllib.parse
 from collections import defaultdict
@@ -129,8 +130,8 @@ def check(
 ) -> bool:
     proxy_name = ""
     try:
-        proxy_name = urllib.parse.quote(proxy.get("name", ""), safe="")
-    except:
+        proxy_name = urllib.parse.quote(str(proxy.get("name", "")), safe="")
+    except (TypeError, ValueError, UnicodeEncodeError):
         logger.debug(f"encoding proxy name error, proxy: {proxy.get('name', '')}")
         return False
 
@@ -158,7 +159,7 @@ def check(
             content = utils.http_get(url=url, retry=2, interval=interval, trace=trace)
             try:
                 data = json.loads(content)
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 data = {}
 
             if data.get("delay", -1) <= 0 or data.get("delay", -1) > delay:
@@ -180,5 +181,5 @@ def is_mihomo() -> bool:
         utils.chmod(binpath)
         _, output = utils.cmd([binpath, "-v"], True)
         return re.search("Mihomo Meta", output, flags=re.I) is not None
-    except:
+    except (OSError, ValueError, subprocess.SubprocessError):
         return False
