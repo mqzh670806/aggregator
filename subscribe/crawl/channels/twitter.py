@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import json
+import os
 import re
 import time
 import urllib.error
@@ -15,6 +16,10 @@ from crawl.helpers import fetch_jobs, is_reachable
 from crawl.models import ChannelResult, CrawlContext
 from logger import logger
 from origin import Origin
+
+
+def _twitter_bearer_token() -> str:
+    return utils.trim(os.environ.get("TWITTER_BEARER_TOKEN", ""))
 
 
 class TwitterChannel(Channel[TwitterConfig]):
@@ -74,13 +79,14 @@ def username_to_id(username: str, headers: dict[str, str]) -> str:
     if utils.isblank(username):
         return ""
 
+    bearer_token = _twitter_bearer_token()
     if not headers or "X-Guest-Token" not in headers:
         guest_token = get_guest_token()
-        if not guest_token:
+        if not guest_token or not bearer_token:
             return ""
         headers = {
             "User-Agent": utils.USER_AGENT,
-            "Authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+            "Authorization": f"Bearer {bearer_token}",
             "X-Guest-Token": guest_token,
             "Content-Type": "application/json",
         }
@@ -110,14 +116,15 @@ def crawl_twitter(config: TwitterConfig, ctx: CrawlContext) -> ChannelResult:
     if not config or not config.users:
         return ChannelResult()
 
+    bearer_token = _twitter_bearer_token()
     guest_token, starttime = get_guest_token(), time.time()
-    if not guest_token:
-        logger.error("[TwitterCrawl] cannot extract X-Guest-Token from twitter")
+    if not guest_token or not bearer_token:
+        logger.error("[TwitterCrawl] missing Twitter guest token or TWITTER_BEARER_TOKEN")
         return ChannelResult()
 
     headers = {
         "User-Agent": utils.USER_AGENT,
-        "Authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+        "Authorization": f"Bearer {bearer_token}",
         "X-Guest-Token": guest_token,
         "Content-Type": "application/json",
     }
