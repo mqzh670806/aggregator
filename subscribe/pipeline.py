@@ -4,6 +4,8 @@ import os
 import random
 import subprocess
 import time
+from contextlib import contextmanager
+from typing import Iterator
 
 import utils
 import workflow
@@ -16,6 +18,25 @@ from workflow import TaskConfig, exists
 
 import clash
 import subconverter
+
+
+@contextmanager
+def managed_subprocess(command: list[str], group: str = "") -> Iterator[subprocess.Popen]:
+    process: subprocess.Popen | None = None
+    try:
+        process = subprocess.Popen(command)
+        yield process
+    finally:
+        if process is not None:
+            try:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            except Exception:
+                logger.error(f"terminate subprocess error, group: {group}")
 
 
 def assign_sites(
@@ -171,17 +192,15 @@ def check_alive_proxies(
     binpath = os.path.join(workspace, clash_bin)
     utils.chmod(binpath)
     logger.info(f"startup clash now, workspace: {workspace}, config: {filename}")
-    process = subprocess.Popen([binpath, "-d", workspace, "-f", os.path.join(workspace, filename)])
-    logger.info(f"clash start success, begin check proxies, group: {group}\tcount: {len(checks)}")
-    time.sleep(random.randint(5, 8))
-    params = [
-        [item, clash.EXTERNAL_CONTROLLER, timeout, test_url, delay, False] for item in checks if isinstance(item, dict)
-    ]
-    masks = utils.multi_thread_run(func=clash.check, tasks=params, num_threads=num_threads, show_progress=display)
-    try:
-        process.terminate()
-    except Exception:
-        logger.error(f"terminate clash process error, group: {group}")
+    command = [binpath, "-d", workspace, "-f", os.path.join(workspace, filename)]
+    with managed_subprocess(command, group=group) as process:
+        logger.info(f"clash start success, begin check proxies, group: {group}\tcount: {len(checks)}")
+        time.sleep(random.randint(5, 8))
+        params = [
+            [item, clash.EXTERNAL_CONTROLLER, timeout, test_url, delay, False]
+            for item in checks if isinstance(item, dict)
+        ]
+        masks = utils.multi_thread_run(func=clash.check, tasks=params, num_threads=num_threads, show_progress=display)
 
     availables = [checks[i] for i in range(len(checks)) if masks[i]]
     nochecks.extend(availables)
