@@ -93,7 +93,6 @@ def login(url, params, headers, retry, proxy=False) -> dict:
                 headers=headers,
                 allow_redirects=True,
                 proxies=PROXY,
-                verify=False,
             )
         else:
             response = requests.post(url, data=params, headers=headers, allow_redirects=True)
@@ -117,7 +116,7 @@ def login(url, params, headers, retry, proxy=False) -> dict:
 def checkin(url, headers, retry, proxy=False) -> None:
     try:
         response = (
-            requests.post(url, headers=headers, proxies=PROXY, verify=False)
+            requests.post(url, headers=headers, proxies=PROXY)
             if proxy
             else requests.post(url, headers=headers)
         )
