@@ -31,14 +31,42 @@ from security.redaction import redact_mapping, redact_url, secret_from_env
 from tqdm import tqdm
 from urlvalidator import isurl
 
+# TLS verification stays enabled. A custom CA bundle can be supplied through
+# SSL_CERT_FILE; the old insecure global bypass is intentionally removed.
 CTX = ssl.create_default_context()
 _CA_BUNDLE = os.environ.get("SSL_CERT_FILE", "").strip()
 if _CA_BUNDLE:
     CTX.load_verify_locations(cafile=_CA_BUNDLE)
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+)
+
+
+# 本地路径协议标识
 FILEPATH_PROTOCAL = "file:///"
-DEFAULT_HTTP_HEADERS = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"}
+
+
+DEFAULT_HTTP_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+}
+
+
+_SUSPICIOUS_URL_RE = re.compile(
+    r"(?i)("
+    r"(?:^|//)(?:[^/]*\.)?(?:speedtest|librespeed|fast\.com|cachefly\.net|thinkbroadband\.com|speed\.cloudflare\.com)"
+    r"|/__down(?:\?|$)"
+    r"|\.(?:zip|iso|exe|mp4|mkv|avi|tar|tgz|gz|7z|rar|bin|img|dmg|apk|msi|pdf|"
+    r"css|js|png|jpe?g|gif|svg|webp|woff2?|ico|map|torrent)(?:\?|$)"
+    r")"
+)
+
+
+def is_suspicious_url(url: str) -> bool:
+    if not url or not isinstance(url, str):
+        return False
+    return bool(_SUSPICIOUS_URL_RE.search(url.strip()))
 
 
 def random_chars(length: int, punctuation: bool = False) -> str:
@@ -47,6 +75,7 @@ def random_chars(length: int, punctuation: bool = False) -> str:
         chars = "".join(random.sample(string.ascii_letters + string.digits + string.punctuation, length))
     else:
         chars = "".join(random.sample(string.ascii_letters + string.digits, length))
+
     return chars
 
 
@@ -56,22 +85,35 @@ def _should_retry_http(status_code: int, reason: object) -> bool:
     return status_code in {429, 500, 502, 503, 504}
 
 
-def http_get(url, headers=None, params=None, retry=3, proxy="", interval=0, timeout=10, trace=False, max_size=None):
+def http_get(
+    url: str,
+    headers: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+    retry: int = 3,
+    proxy: str = "",
+    interval: float = 0,
+    timeout: float = 10,
+    trace: bool = False,
+    max_size: int | None = None,
+) -> str:
     if not isurl(url=url):
         logger.error(f"invalid url: {redact_url(url)}")
         return ""
+
     retry = max(0, retry)
     headers = DEFAULT_HTTP_HEADERS if not headers else headers
     interval = max(0, interval)
     timeout = max(1, timeout)
     length = None if max_size is None or max_size <= 0 else max_size
     safe_url = redact_url(encoding_url(url=url))
+
     for attempt in range(retry + 1):
         try:
             request_url = encoding_url(url=url)
             if params and isinstance(params, dict):
                 query = urllib.parse.urlencode(params)
                 request_url = f"{request_url}&{query}" if "?" in request_url else f"{request_url}?{query}"
+
             request = urllib.request.Request(url=request_url, headers=headers)
             if proxy and (proxy.startswith("https://") or proxy.startswith("http://")):
                 host, protocol = "", ""
@@ -80,6 +122,7 @@ def http_get(url, headers=None, params=None, retry=3, proxy="", interval=0, time
                 else:
                     host, protocol = proxy[7:], "http"
                 request.set_proxy(host=host, type=protocol)
+
             response = urllib.request.urlopen(request, timeout=timeout, context=CTX)
             raw = response.read(length)
             status_code = response.getcode()
@@ -87,6 +130,7 @@ def http_get(url, headers=None, params=None, retry=3, proxy="", interval=0, time
                 content = str(raw, encoding="utf8")
             except UnicodeDecodeError:
                 content = gzip.decompress(raw).decode("utf8", errors="replace")
+
             if status_code != 200:
                 if trace:
                     logger.error(f"request failed, url: {safe_url}, code: {status_code}")
@@ -114,21 +158,58 @@ def http_get(url, headers=None, params=None, retry=3, proxy="", interval=0, time
                 logger.error(f"request failed, url: {safe_url}, error: {type(e).__name__}")
             if attempt == retry:
                 return ""
+
         if interval > 0:
             time.sleep(interval * (attempt + 1))
+
     return ""
+
+
+def extract_domain(url: str, include_protocal: bool = False) -> str:
+    if not url:
+        return ""
+
+    start = url.find("//")
+    if start == -1:
+        start = -2
+
+    end = url.find("/", start + 2)
+    if end == -1:
+        end = len(url)
+
+    if include_protocal:
+        return url[:end]
+
+    return url[start + 2 : end]
+
+
+def extract_cookie(text: str) -> str:
+    # ?: 标识后面的内容不是一个group
+    regex = "((?:v2board)?_session)=((?:.+?);|.*)"
+    if not text:
+        return ""
+
+    content = re.findall(regex, text)
+    cookie = ";".join(["=".join(x) for x in content]).strip()
+    return cookie
 
 
 def cmd(command: list[str], output: bool = False) -> tuple[bool, str]:
     if command is None or len(command) == 0:
         return False, ""
-    p = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) if output else subprocess.Popen(command)
+
+    p = (
+        subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if output
+        else subprocess.Popen(command)
+    )
     try:
         stdout, _ = p.communicate(timeout=30)
     except subprocess.TimeoutExpired:
         p.kill()
         stdout, _ = p.communicate()
         return False, ""
+
     success, content = p.returncode == 0, ""
     if output:
         try:
@@ -136,3 +217,410 @@ def cmd(command: list[str], output: bool = False) -> tuple[bool, str]:
         except Exception:
             content = ""
     return success, content
+
+
+def chmod(binfile: str) -> None:
+    if not os.path.exists(binfile) or os.path.isdir(binfile):
+        raise ValueError(f"cannot found bin file: {binfile}")
+
+    operating_system = str(platform.platform())
+    if operating_system.startswith("Windows"):
+        return
+    elif operating_system.startswith("macOS") or operating_system.startswith("Linux"):
+        cmd(["chmod", "+x", binfile])
+    else:
+        logger.error("Unsupported Platform")
+        sys.exit(0)
+
+
+def encoding_url(url: str) -> str:
+    if not url:
+        return ""
+
+    url = url.strip()
+
+    # 解析URL获取各个部分
+    try:
+        result = urllib.parse.urlparse(url)
+        domain = result.netloc
+        path = result.path
+        query = result.query
+        fragment = result.fragment
+
+        # 处理域名部分（可能包含端口号）
+        if re.search("[\u4e00-\u9fa5]", domain):
+            if ":" in domain:
+                host, port = domain.split(":", 1)
+                # 对域名部分进行Punycode编码
+                host = host.encode("idna").decode("utf-8")
+                # 重新组合域名和端口
+                domain = f"{host}:{port}"
+            else:
+                # 直接对整个域名进行Punycode编码
+                domain = domain.encode("idna").decode("utf-8")
+
+        # 处理路径部分，对非ASCII字符进行URL编码
+        if re.search("[\u4e00-\u9fa5]", path):
+            # 对路径中的中文字符进行URL编码
+            path = urllib.parse.quote(path, safe="/")
+
+        # 处理查询参数部分，保留查询参数的结构
+        if query and re.search("[\u4e00-\u9fa5]", query):
+            # 解析查询参数
+            query_dict = urllib.parse.parse_qs(query)
+            # 对每个参数值进行URL编码
+            encoded_query_dict = {}
+            for key, values in query_dict.items():
+                encoded_query_dict[key] = [urllib.parse.quote(v, safe="") for v in values]
+            # 重新组合查询参数
+            query = urllib.parse.urlencode(encoded_query_dict, doseq=True)
+
+        # 处理片段部分
+        if fragment and re.search("[\u4e00-\u9fa5]", fragment):
+            fragment = urllib.parse.quote(fragment)
+
+        # 重新组装URL
+        url = urllib.parse.urlunparse(
+            (
+                result.scheme,
+                domain,
+                path,
+                result.params,
+                query,
+                fragment,
+            )
+        )
+
+        return url
+    except Exception as e:
+        logger.error(f"Error encoding URL: {url}, error: {str(e)}")
+        return url
+
+
+def write_file(filename: str, lines: list[str] | str) -> bool:
+    if not filename or not lines:
+        logger.error(f"filename or lines is empty, filename: {redact_url(filename)}")
+        return False
+
+    try:
+        if not isinstance(lines, str):
+            lines = "\n".join(lines)
+
+        filepath = os.path.abspath(os.path.dirname(filename))
+        os.makedirs(filepath, exist_ok=True)
+        with open(filename, "w+", encoding="UTF8") as f:
+            f.write(lines)
+            f.flush()
+
+        return True
+    except Exception as e:
+        logger.error(f"write file failed: {type(e).__name__}: {e}")
+        return False
+
+
+def isb64encode(content: str, padding: bool = True) -> bool:
+    if not content:
+        return False
+
+    # 判断是否为base64编码
+    regex = "^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$"
+
+    # 不是标准base64编码的情况，padding
+    b64flag = re.match(regex, content)
+    if not b64flag and len(content) % 4 != 0 and padding:
+        content += "=" * (4 - len(content) % 4)
+        b64flag = re.match(regex, content)
+
+    return b64flag is not None
+
+
+def isblank(text: str) -> bool:
+    return not text or type(text) != str or not text.strip()
+
+
+def trim(text: str) -> str:
+    if not text or type(text) != str:
+        return ""
+
+    return text.strip()
+
+
+def load_dotenv(enviroment: str = ".env") -> None:
+    path = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    enviroment = trim(enviroment) or ".env"
+    filename = os.path.join(path, enviroment)
+
+    if not os.path.exists(filename) or os.path.isdir(filename):
+        return
+
+    with open(filename, mode="r", encoding="utf8") as f:
+        for line in f.readlines():
+            content = line.strip()
+            if not content or content.startswith("#") or "=" not in content:
+                continue
+
+            content = content.split("#", maxsplit=1)[0]
+            words = content.split("=", maxsplit=1)
+            k, v = words[0].strip(), words[1].strip()
+            if k and v:
+                os.environ[k] = v
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = trim(os.environ.get(name, ""))
+    if not raw:
+        return default
+    return raw.lower() in ["true", "1"]
+
+
+def hide(url: str) -> str:
+    # len('http://') equals 7
+    if isblank(url) or len(url) < 7:
+        return url
+
+    return url[:-7] + "*" * 7
+
+
+def parse_token(url: str) -> str:
+    if not isurl(url):
+        return ""
+
+    result = urllib.parse.urlparse(url=url)
+    if result.query:
+        params = {k: v[0] for k, v in urllib.parse.parse_qs(result.query).items()}
+        if "token" in params:
+            return params.get("token", "")
+
+    group = re.findall(".*/link/([a-zA-Z0-9]+)", url, flags=re.I)
+    content = trim(group[0]) if group else ""
+    return content.lower() if content else url.lower()
+
+
+def mask(url: str) -> str:
+    url = trim(text=url)
+    try:
+        parse_result = urllib.parse.urlparse(url=url)
+        if "token=" in parse_result.query:
+            token = "".join(re.findall("token=([a-zA-Z0-9]+)", parse_result.query))
+            if len(token) >= 6:
+                token = token[:3] + "***" + token[-3:]
+            url = f"{parse_result.scheme}://{parse_result.netloc}{parse_result.path}?token={token}"
+        else:
+            path, token = parse_result.path.rsplit("/", maxsplit=1)
+            if len(token) >= 6:
+                token = token[:3] + "***" + token[-3:]
+            url = f"{parse_result.scheme}://{parse_result.netloc}{path}/{token}"
+    except Exception as e:
+        logger.error(f"invalid url: {type(e).__name__}")
+
+    return url
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def http_error_302(
+        self,
+        req: urllib.request.Request,
+        fp: typing.IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+    ) -> typing.IO[bytes]:
+        return fp
+
+
+def http_post(
+    url: str,
+    headers: dict[str, str] | None = None,
+    params: dict[str, object] | None = None,
+    retry: int = 3,
+    timeout: float = 6,
+    allow_redirects: bool = True,
+) -> HTTPResponse | None:
+    if params is None or type(params) != dict:
+        return None
+    retry = max(0, retry)
+    timeout = max(timeout, 1)
+    if not headers:
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/json",
+        }
+
+    safe_url = redact_url(url)
+    for attempt in range(retry + 1):
+        try:
+            data = json.dumps(redact_mapping(params)).encode(encoding="UTF8")
+            request = urllib.request.Request(url=url, data=data, headers=headers, method="POST")
+            if allow_redirects:
+                return urllib.request.urlopen(request, timeout=timeout, context=CTX)
+
+            opener = urllib.request.build_opener(NoRedirect)
+            return opener.open(request, timeout=timeout)
+        except Exception as e:
+            logger.error(f"POST failed, url: {safe_url}, error: {type(e).__name__}")
+            if attempt == retry:
+                return None
+            time.sleep(random.random() * (attempt + 1))
+    return None
+
+
+def verify_uuid(text: str) -> bool:
+    if not text or type(text) != str:
+        return False
+
+    try:
+        _ = uuid.UUID(text)
+        return True
+    except ValueError:
+        return False
+
+
+def is_number(num: str) -> bool:
+    try:
+        float(num)
+        return True
+    except ValueError:
+        return False
+
+
+def url_complete(url: str, secret: bool = False) -> str:
+    if isblank(url):
+        return ""
+
+    if not url.startswith("https://"):
+        # force use https protocol
+        if url.startswith("http://"):
+            if secret:
+                url = url.replace("http://", "https://")
+        else:
+            url = f"https://{url}"
+
+    return url
+
+
+def load_emoji_pattern(filepath: str = "") -> dict[str, str]:
+    filepath = trim(filepath)
+    if not filepath:
+        workspace = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+        filepath = os.path.join(workspace, "subconverter", "snippets", "emoji.txt")
+
+    if not os.path.exists(filepath) or not os.path.isfile(filepath):
+        logger.warning(f"cannot parse emoji config due to file {filepath} not exists")
+        return {}
+
+    # see: https://github.com/tindy2013/subconverter/blob/master/base/snippets/emoji.txt
+    patterns = {}
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f.readlines():
+            line = trim(line)
+            if not line or line.startswith("#"):
+                continue
+
+            try:
+                regex, emoji = line.rsplit(",", maxsplit=1)
+                pattern = re.compile(regex, flags=re.I)
+                patterns[pattern] = emoji
+            except ValueError:
+                logger.warning(f"cannot parse emoji config due to invalid line: {line}")
+
+    return patterns
+
+
+def get_emoji(text: str, patterns: dict[str, str], default: str = "") -> str:
+    if not patterns or type(patterns) != dict or not text or type(text) != str:
+        return default
+
+    for pattern, emoji in patterns.items():
+        if pattern.search(text):
+            return emoji
+
+    return default
+
+
+def get_subpath(api_prefix: str, default: str = "/api/v1/") -> str:
+    path = trim(api_prefix) or trim(default) or "/api/v1/"
+    if not path.startswith("/"):
+        path = "/" + path
+    if not path.endswith("=") and not path.endswith("/"):
+        path += "/"
+
+    return path
+
+
+def multi_process_run(func: typing.Callable[..., object], tasks: list[object]) -> list[object]:
+    if not func or not isinstance(func, typing.Callable):
+        logger.error(f"skip execute due to func is not callable")
+        return []
+
+    if not tasks or type(tasks) != list:
+        logger.error(f"skip execute due to tasks is empty or invalid")
+        return []
+
+    cpu_count = multiprocessing.cpu_count()
+    num = len(tasks) if len(tasks) <= cpu_count else cpu_count
+
+    starttime, results = time.time(), []
+
+    # TODO: handle KeyboardInterrupt and exit program immediately
+    with multiprocessing.Pool(num) as pool:
+        try:
+            if isinstance(tasks[0], (list, tuple)):
+                results = pool.starmap(func, tasks)
+            else:
+                results = pool.map(func, tasks)
+        except KeyboardInterrupt:
+            logger.error(f"the tasks has been cancelled and the program will exit now")
+
+            pool.terminate()
+            pool.join()
+
+    funcname = getattr(func, "__name__", repr(func))
+    logger.info(
+        f"[Concurrent] multi-process concurrent execute [{funcname}] finished, count: {len(tasks)}, cost: {time.time()-starttime:.2f}s"
+    )
+
+    return results
+
+
+def multi_thread_run(
+    func: typing.Callable[..., object],
+    tasks: list[object],
+    num_threads: int | None = None,
+    show_progress: bool = False,
+    description: str = "",
+) -> list[object]:
+    if not func or not tasks or not isinstance(tasks, list):
+        return []
+
+    if num_threads is None or num_threads <= 0:
+        num_threads = min(len(tasks), (os.cpu_count() or 1) * 2)
+
+    funcname = getattr(func, "__name__", repr(func))
+
+    results, starttime = [None] * len(tasks), time.time()
+    with futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        if isinstance(tasks[0], (list, tuple)):
+            collections = {executor.submit(func, *param): i for i, param in enumerate(tasks)}
+        else:
+            collections = {executor.submit(func, param): i for i, param in enumerate(tasks)}
+
+        items = futures.as_completed(collections)
+        if show_progress:
+            description = trim(description) or "Progress"
+
+            # TODO: use p_tqdm instead of tqdm, see https://github.com/swansonk14/p_tqdm
+            items = tqdm(items, total=len(collections), desc=description, leave=True)
+
+        for future in items:
+            try:
+                result = future.result()
+                index = collections[future]
+                results[index] = result
+            except Exception as e:
+                logger.error(f"function {funcname} execution generated an exception: {e}")
+
+    logger.info(
+        f"[Concurrent] multi-threaded execute [{funcname}] finished, count: {len(tasks)}, cost: {time.time()-starttime:.2f}s"
+    )
+
+    return results
