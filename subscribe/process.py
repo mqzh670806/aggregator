@@ -49,7 +49,7 @@ def load_configs(
     raw = {}
     try:
         if re.match(
-            r"^(https?:\/\/(([a-zA-Z0-9]+-?)+[a-zA-Z0-9]+\.)+[a-zA-Z]+)(:\d+)?(\/.*)?(\?.*)?(#.*)?$",
+            r"^(https:\/\/(([a-zA-Z0-9]+-?)+[a-zA-Z0-9]+\.)+[a-zA-Z]+)(:\d+)?(\/.*)?(\?.*)?(#.*)?$",
             url,
         ):
             headers = {"User-Agent": utils.USER_AGENT, "Referer": url}
@@ -62,7 +62,8 @@ def load_configs(
         else:
             localfile = os.path.abspath(url)
             if os.path.exists(localfile) and os.path.isfile(localfile):
-                raw = json.loads(open(localfile, "r", encoding="utf8").read())
+                with open(localfile, "r", encoding="utf8") as handle:
+                    raw = json.loads(handle.read())
                 os.environ["SUBSCRIBE_CONF"] = localfile
 
         config = ProcessConfig.parse(raw or {})
