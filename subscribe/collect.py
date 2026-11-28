@@ -253,8 +253,8 @@ def aggregate(args: argparse.Namespace) -> None:
         nodes = clash.filter_proxies(proxies).get("proxies", [])
     else:
         binpath = os.path.join(workspace, clash_bin)
-        confif_file = "config.yaml"
-        proxies = clash.generate_config(workspace, list(proxies), confif_file)
+        config_file = "config.yaml"
+        proxies = clash.generate_config(workspace, list(proxies), config_file)
 
         # 可执行权限
         utils.chmod(binpath)
@@ -266,7 +266,7 @@ def aggregate(args: argparse.Namespace) -> None:
                 "-d",
                 workspace,
                 "-f",
-                os.path.join(workspace, confif_file),
+                os.path.join(workspace, config_file),
             ]
         )
         logger.info(f"clash start success, begin check proxies, num: {len(proxies)}")
@@ -283,11 +283,16 @@ def aggregate(args: argparse.Namespace) -> None:
             show_progress=display,
         )
 
-        # 关闭clash
+        # 关闭 clash，并确保超时后回收进程
         try:
             process.terminate()
-        except:
-            logger.error(f"terminate clash process error")
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        except Exception:
+            logger.error("terminate clash process error")
 
         nodes = [proxies[i] for i in range(len(proxies)) if masks[i]]
         if len(nodes) <= 0:
