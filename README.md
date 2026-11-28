@@ -222,3 +222,19 @@ python subscribe/process.py -s config.json -n 128
 ### 核心依赖
 - [Subconverter](https://github.com/asdlokj1qpi233/subconverter) - 订阅转换核心
 - [Mihomo](https://github.com/MetaCubeX/mihomo) - 代理测试引擎
+
+### 赞助支持
+感谢以下组织的赞助支持：
+- [![YXVM](https://support.nodeget.com/page/promotion?id=250)](https://yxvm.com)
+- [NodeSupport](https://github.com/NodeSeekDev/NodeSupport)
+
+### 社区贡献
+感谢所有为项目贡献代码、提出建议和报告问题的开发者们！
+
+<div align="center">
+
+**如果这个项目对你有帮助，请给它一个 ⭐**
+
+[报告问题](https://github.com/wzdnzd/aggregator/issues) · [功能请求](https://github.com/wzdnzd/aggregator/issues) · [贡献代码](https://github.com/wzdnzd/aggregator/pulls)
+
+</div>
