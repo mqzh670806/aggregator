@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "subscribe"))
 
-from config.models import RenewAccount, StorageItem
+from config.models import RenewAccount, StorageConfig, StorageItem
 from config.parse import Node
 from security.redaction import redact_mapping, redact_url
 
@@ -56,6 +56,14 @@ class RedactionTests(unittest.TestCase):
         node = Node({"email": "demo@example.com", "password": "plain-secret"})
         with self.assertRaises(Exception):
             RenewAccount.parse(node)
+
+    def test_storage_config_export_hides_token(self):
+        node = Node({"engine": "gist", "token": "secret-token", "base": "https://example.com"})
+        config = StorageConfig.parse(node)
+        payload = config.to_dict()
+        self.assertEqual(payload["engine"], "gist")
+        self.assertEqual(payload["token"], "***")
+        self.assertEqual(payload["base"], "https://example.com")
 
 
 if __name__ == "__main__":
